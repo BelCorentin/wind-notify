@@ -95,6 +95,23 @@ Quick mock test (current wind is usually > 5 kn):
 WIND_THRESHOLD_KN=5 WIND_STATE_FILE=/tmp/wind_test.json SIGNAL_NUMBER=+33612345678 python3 wind_notify.py
 ```
 
+## Troubleshooting
+
+- **Phone says "incorrect QR code"**: you must scan from Signal →
+  Settings → Linked devices → *Link new device* — not the regular
+  in-chat QR scanner. Also, each QR is single-use and expires after
+  ~1 minute; regenerate if in doubt.
+- **`User +336... is not registered` on send**: the API process loads
+  accounts at startup — restart the container after linking
+  (`docker compose restart`). If you linked with `docker exec ...
+  signal-cli link` instead of the `/v1/qrcodelink` endpoint, the account
+  data was written to `/root/.local/share/signal-cli` (exec runs as
+  root); move it into the mounted config dir:
+  `docker exec signal-api sh -c 'cp -r /root/.local/share/signal-cli/data /home/.local/share/signal-cli/ && chown -R 1000:1000 /home/.local/share/signal-cli'`
+  then restart.
+- **Port 8080 already taken**: `SIGNAL_API_PORT=8081 docker compose up -d`
+  and set `SIGNAL_API_URL=http://localhost:8081` for the script.
+
 ## Caveats
 
 - The `summaryData` endpoint is unofficial (it's what the embed widget
