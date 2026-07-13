@@ -1,0 +1,6 @@
+# Signal device keys — never commit
+signal-cli-config/
+
+qr.png
+*.log
+__pycache__/
