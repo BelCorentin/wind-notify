@@ -95,6 +95,78 @@ Quick mock test (current wind is usually > 5 kn):
 WIND_THRESHOLD_KN=5 WIND_STATE_FILE=/tmp/wind_test.json SIGNAL_NUMBER=+33612345678 python3 wind_notify.py
 ```
 
+## Deploying to the home server (Freebox VM)
+
+One-time, from the home LAN (the VM is not reachable from outside):
+
+```bash
+# 1. On the VM
+ssh co@192.168.1.81
+git clone https://github.com/BelCorentin/wind-notify && cd wind-notify
+docker compose up -d
+
+# 2. From the laptop: copy the already-linked Signal keys
+#    (avoids re-scanning a QR code; the VM becomes the "windbot" device)
+scp -r ~/tmp/claude/wind-notify/signal-cli-config co@192.168.1.81:wind-notify/
+ssh co@192.168.1.81 "cd wind-notify && docker compose restart"
+
+# 3. Sanity check on the VM
+curl -s http://localhost:8080/v1/accounts        # expect ["+33695209684"]
+SIGNAL_NUMBER=+33695209684 WIND_THRESHOLD_KN=5 \
+  WIND_STATE_FILE=/tmp/wind_test.json python3 wind_notify.py   # forces a notif
+
+# 4. Cron on the VM
+crontab -e
+# */15 * * * * SIGNAL_NUMBER=+33695209684 /usr/bin/python3 /home/co/wind-notify/wind_notify.py >> /home/co/wind_notify.log 2>&1
+```
+
+Then remove the interim cron entry on the laptop (`crontab -e`).
+
+Important: only one machine should run the container with a given
+`signal-cli-config` — don't leave both the laptop and the VM sending
+from the same linked device.
+
+Optional: enable the Freebox WireGuard VPN server (Freebox OS → VPN
+serveur) to reach the VM from outside home.
+
+## Concepts (what you'd need to know to build this)
+
+- **Embedded widgets hide clean APIs.** The port's webpage doesn't
+  contain wind data — it embeds a WeatherLink iframe. Opening the
+  browser dev tools (Network tab) on such a widget shows the JSON
+  endpoint the widget itself calls. Consuming that endpoint directly is
+  far more robust than scraping HTML: you get typed values (`13.9`,
+  `"knots"`) instead of parsing markup that changes with every redesign.
+- **Polling + cron.** Nothing here runs continuously: cron starts the
+  script every 15 minutes, the script does one fetch, maybe one send,
+  and exits. For infrequent checks this beats a daemon — no process to
+  babysit, survives reboots for free.
+- **State + hysteresis for alerts.** A naive "if wind > 15 notify"
+  would message every 15 minutes all afternoon. The script persists a
+  tiny JSON state file between runs and only notifies on the
+  below→above *crossing*, plus one hourly reminder while it stays
+  windy. Any alerting system (monitoring, CI, etc.) needs this pattern.
+- **Signal has no simple bot API.** Unlike Telegram, Signal is
+  end-to-end encrypted with keys held by devices, so you can't just
+  POST to a web API with a token. `signal-cli` implements a full Signal
+  client; it gets *linked* to your account as a secondary device (like
+  Signal Desktop) and holds its own keys — that's the QR-code ceremony,
+  and why `signal-cli-config/` is secret material, not config.
+- **Docker as an installation shortcut.** signal-cli needs a Java/native
+  runtime and versioned upkeep; `bbernhard/signal-cli-rest-api` wraps it
+  in a container exposing plain HTTP (`POST /v2/send`). The compose file
+  maps a host port (`127.0.0.1:8080` — localhost-only, so nothing else
+  on the network can send as you) and mounts `./signal-cli-config` as a
+  volume so keys survive container recreation.
+- **Configuration via environment variables.** The script has no config
+  file; number, threshold, URL come from env vars with defaults. That
+  keeps secrets out of git and lets the same code run in test
+  (`WIND_THRESHOLD_KN=5`) and production without edits.
+- **Fail loudly, skip stale.** The script trusts cron+log for
+  visibility: any unexpected error raises and lands in the log, and
+  station data older than 1 h is skipped rather than alerting on
+  yesterday's wind.
+
 ## Troubleshooting
 
 - **Phone says "incorrect QR code"**: you must scan from Signal →
